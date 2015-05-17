@@ -337,44 +337,45 @@ void GIRObject::Prepare(Handle<Object> target, GIObjectInfo *info)
     char *name = (char*)g_base_info_get_name(info);
     const char *namespace_ = g_base_info_get_namespace(info);
     g_base_info_ref(info);
-    
-    Local<FunctionTemplate> t = NanNew<FunctionTemplate>(New);
-    t->SetClassName(NanNew<String>(name));
-    
+
     ObjectFunctionTemplate oft;
+    Local<FunctionTemplate> lt = NanNew<FunctionTemplate>(New);
+    oft.function = lt;
+    oft.pHandle.Reset(v8::Isolate::GetCurrent(), lt);
+    oft.function->SetClassName(NanNew<String>(name));
+
     oft.type_name = name;
     oft.info = info;
-    oft.function = t;
     oft.type = g_registered_type_info_get_g_type(info);
     oft.namespace_ = (char*)namespace_;
     
     templates.push_back(oft);
 
     // Create instance template
-    v8::Local<v8::ObjectTemplate> instance_t = t->InstanceTemplate();
+    v8::Local<v8::ObjectTemplate> instance_t = oft.function->InstanceTemplate();
     instance_t->SetInternalFieldCount(1);
     // Create external to hold GIBaseInfo and set it
     v8::Handle<v8::External> info_handle = NanNew<v8::External>((void*)g_base_info_ref(info));
     // Set properties handlers
     instance_t->SetNamedPropertyHandler(PropertyGetHandler, PropertySetHandler, PropertyQueryHandler, 0, 0, info_handle);
         
-    t->Set(NanNew<v8::String>("__properties__"), PropertyList(info));
-    t->Set(NanNew<v8::String>("__methods__"), MethodList(info));
-    t->Set(NanNew<v8::String>("__interfaces__"), InterfaceList(info));
-    t->Set(NanNew<v8::String>("__fields__"), FieldList(info));
-    t->Set(NanNew<v8::String>("__signals__"), SignalList(info));
-    t->Set(NanNew<v8::String>("__v_funcs__"), VFuncList(info));
-    t->Set(NanNew<v8::String>("__abstract__"), NanNew<Boolean>(g_object_info_get_abstract(info)));
+    oft.function->Set(NanNew<v8::String>("__properties__"), PropertyList(info));
+    oft.function->Set(NanNew<v8::String>("__methods__"), MethodList(info));
+    oft.function->Set(NanNew<v8::String>("__interfaces__"), InterfaceList(info));
+    oft.function->Set(NanNew<v8::String>("__fields__"), FieldList(info));
+    oft.function->Set(NanNew<v8::String>("__signals__"), SignalList(info));
+    oft.function->Set(NanNew<v8::String>("__v_funcs__"), VFuncList(info));
+    oft.function->Set(NanNew<v8::String>("__abstract__"), NanNew<Boolean>(g_object_info_get_abstract(info)));
     
     int l = g_object_info_get_n_constants(info);
     for (int i=0; i<l; i++) {
         GIConstantInfo *constant = g_object_info_get_constant(info, i);
-        t->Set(NanNew<String>(g_base_info_get_name(constant)), NanNew<Number>(i));
+        oft.function->Set(NanNew<String>(g_base_info_get_name(constant)), NanNew<Number>(i));
         g_base_info_unref(constant);
     }
     
-    RegisterMethods(target, info, namespace_, t);
-    SetPrototypeMethods(t, name);
+    RegisterMethods(target, info, namespace_, oft.function);
+    SetPrototypeMethods(oft.function, name);
 }
 
 void GIRObject::Initialize(Handle<Object> target, char *namespace_) 
@@ -382,20 +383,21 @@ void GIRObject::Initialize(Handle<Object> target, char *namespace_)
     // this gets called when all classes have been initialized
     std::vector<ObjectFunctionTemplate>::iterator it;
     std::vector<ObjectFunctionTemplate>::iterator temp;
-    GIObjectInfo* parent;
+    //GIObjectInfo* parent;
     
-    for (it = templates.begin(); it != templates.end(); ++it) {
-        parent = g_object_info_get_parent(it->info);
-        if (strcmp(it->namespace_, namespace_) != 0 || !parent) {
-            continue;
-        }
+    //for (it = templates.begin(); it != templates.end(); ++it) {
+        //parent = g_object_info_get_parent(it->info);
+        //if (strcmp(it->namespace_, namespace_) != 0 || !parent) {
+        //   continue;
+        //}
 
-        for (temp = templates.begin(); temp != templates.end(); ++temp) {
-            if (g_base_info_equal(temp->info, parent)) {
-                it->function->Inherit(temp->function);
-            }
-        }
-    }
+        //for (temp = templates.begin(); temp != templates.end(); ++temp) {
+            //if (g_base_info_equal(temp->info, parent)) {
+                //fprintf(stdout, "init: %s %p base: %s %p\n", it->type_name, it->function, temp->type_name, temp->function);
+                //it->function->Inherit(temp->function);
+            //}
+        //}
+    //}
     for (it = templates.begin(); it != templates.end(); ++it) {
         if (strcmp(it->namespace_, namespace_) == 0) {
             target->Set(NanNew<String>(g_base_info_get_name(it->info)), it->function->GetFunction());

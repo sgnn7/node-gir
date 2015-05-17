@@ -18,6 +18,7 @@ struct ObjectFunctionTemplate {
     char *type_name;
     GIObjectInfo *info;
     v8::Handle<v8::FunctionTemplate> function;
+    v8::Persistent<v8::FunctionTemplate, v8::CopyablePersistentTraits<v8::FunctionTemplate> > pHandle;
     GType type;
     char *namespace_;
 };
