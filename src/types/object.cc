@@ -337,10 +337,11 @@ void GIRObject::Prepare(Handle<Object> target, GIObjectInfo *info)
     char *name = (char*)g_base_info_get_name(info);
     const char *namespace_ = g_base_info_get_namespace(info);
     g_base_info_ref(info);
-    
+
+    Persistent<FunctionTemplate> persistentObject;
     Local<FunctionTemplate> t = NanNew<FunctionTemplate>(New);
     t->SetClassName(NanNew<String>(name));
-    
+    persistentObject.Reset(v8::Isolate::GetCurrent(), t);
     ObjectFunctionTemplate oft;
     oft.type_name = name;
     oft.info = info;
@@ -419,14 +420,9 @@ Handle<Value> GIRObject::Emit(Handle<Value> argv[], int length)
 {
     //NanAsciiString cname(handle_->GetConstructorName());
     //String::Utf8Value signal(argv[0]);
-
-    //printf ("Emit, handle is '%s' '%s' [%p], length (%d) \n", *cname, *signal, handle_, length);
-
     // this will do the magic but dont forget to extend this object in JS from require("events").EventEmitter
     Local<Value> emit_v = handle()->Get(emit_symbol);
-    //printf ("EMIT PTR IS [%p] \n", emit_v);
     //v8::String::AsciiValue ename(emit_v->ToString());
-    //printf ("Emit, emit is '%s' \n", *ename);
     if (emit_v->IsUndefined() || !emit_v->IsFunction()) {
         return NanNull();
     }
@@ -467,7 +463,6 @@ void GIRObject::SignalCallback(GClosure *closure,
     MarshalData *data = (MarshalData*)marshal_data;
     
     Handle<Value> args[n_param_values+1];
-    //printf ("SignalCallback : [%p] '%s' \n", data->event_name, data->event_name);
     args[0] = NanNew<String>(data->event_name);
     
     for (guint i=0; i<n_param_values; i++) {
@@ -477,7 +472,6 @@ void GIRObject::SignalCallback(GClosure *closure,
 
     Handle<Value> res = data->that->Emit(args, n_param_values+1);
     if (res != NanNull()) {
-        //printf ("Call ToGValue '%s'\n", G_VALUE_TYPE_NAME(return_value));
         if (return_value && G_IS_VALUE(return_value))
             GIRValue::ToGValue(res, G_VALUE_TYPE(return_value), return_value);
     }
@@ -877,7 +871,6 @@ Handle<Object> GIRObject::PropertyList(GIObjectInfo *info)
         gcounter += l;
         first = false;
     }
-    
     return list;
 }
 
@@ -910,7 +903,6 @@ Handle<Object> GIRObject::MethodList(GIObjectInfo *info)
         gcounter += l;
         first = false;
     }
-    
     return list;
 }
 
@@ -937,7 +929,7 @@ void GIRObject::RegisterMethods(Handle<Object> target, GIObjectInfo *info, const
     bool first = true;
     int gcounter = 0;
     g_base_info_ref(info);
-    
+
     while (true) {
         if (!first) {
             GIObjectInfo *parent = NULL;
@@ -970,29 +962,33 @@ void GIRObject::RegisterMethods(Handle<Object> target, GIObjectInfo *info, const
                 func = g_interface_info_get_method(info, i);
             }
             const char *func_name = g_base_info_get_name(func);
-            GIFunctionInfoFlags func_flag = g_function_info_get_flags(func);
 
-            // Determine if method is static one.
-            // In such case, do not set prototype method but instead register
-            // a function attached to the namespace of the class.
-            if (func_flag & GI_FUNCTION_IS_METHOD) {
-                NODE_SET_PROTOTYPE_METHOD(t, func_name, CallUnknownMethod);
-            } else {
-                // Create new function
-                Local< Function > callback_func = NanNew<FunctionTemplate>(Func::CallStaticMethod)->GetFunction();
-                // Set name
-                callback_func->SetName(NanNew<String>(func_name));
-                // Create external to hold GIBaseInfo and set it
-                v8::Handle<v8::External> info_ptr = NanNew<v8::External>((void*)g_base_info_ref(func));
-                callback_func->SetHiddenValue(NanNew<String>("GIInfo"), info_ptr);
-                // Set v8 function
-                t->Set(NanNew<String>(func_name), callback_func);
+            if(!t->GetFunction()->Has(NanNew<String>(func_name))) {
+                GIFunctionInfoFlags func_flag = g_function_info_get_flags(func);
+
+                // Determine if method is static one.
+                // In such case, do not set prototype method but instead register
+                // a function attached to the namespace of the class.
+                if (func_flag & GI_FUNCTION_IS_METHOD) {
+                    NODE_SET_PROTOTYPE_METHOD(t, func_name, CallUnknownMethod);
+                } else {
+                    // Create new function
+                    Local< Function > callback_func = NanNew<FunctionTemplate>(Func::CallStaticMethod)->GetFunction();
+                    // Set name
+                    callback_func->SetName(NanNew<String>(func_name));
+                    // Create external to hold GIBaseInfo and set it
+                    v8::Handle<v8::External> info_ptr = NanNew<v8::External>((void*)g_base_info_ref(func));
+                    callback_func->SetHiddenValue(NanNew<String>("GIInfo"), info_ptr);
+                    // Set v8 function
+                    t->Set(NanNew<String>(func_name), callback_func);
+                }
             }
             g_base_info_unref(func);
         }
         gcounter += l;
         first = false;
     }
+
 }
 
 Handle<Object> GIRObject::InterfaceList(GIObjectInfo *info) 
@@ -1024,7 +1020,6 @@ Handle<Object> GIRObject::InterfaceList(GIObjectInfo *info)
         gcounter += l;
         first = false;
     }
-    
     return list;
 }
 
@@ -1057,7 +1052,6 @@ Handle<Object> GIRObject::FieldList(GIObjectInfo *info)
         gcounter += l;
         first = false;
     }
-    
     return list;
 }
 
@@ -1074,7 +1068,7 @@ Handle<Object> GIRObject::SignalList(GIObjectInfo *info)
             if (!parent) {
                 return list;
             }
-            if (strcmp( g_base_info_get_name(parent), g_base_info_get_name(info)/*"InitiallyUnowned"*/ ) == 0) {
+            if (strcmp( g_base_info_get_name(parent), g_base_info_get_name(info) ) == 0) { //"InitiallyUnowned"
                 return list;
             }
             g_base_info_unref(info);
@@ -1090,7 +1084,6 @@ Handle<Object> GIRObject::SignalList(GIObjectInfo *info)
         gcounter += l;
         first = false;
     }
-    
     return list;
 }
 
@@ -1123,7 +1116,6 @@ Handle<Object> GIRObject::VFuncList(GIObjectInfo *info)
         gcounter += l;
         first = false;
     }
-    
     return list;
 }
 
