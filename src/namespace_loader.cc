@@ -17,9 +17,11 @@ std::map<char *, GITypelib*> NamespaceLoader::type_libs;
 NAN_METHOD(NamespaceLoader::Load) {
     if (info.Length() < 1) {
         Nan::ThrowError("too few arguments");
+        return;
     }
     if (!info[0]->IsString()) {
         Nan::ThrowError("argument has to be a string");
+        return;
     }
 
     Local<Value> exports;
@@ -45,16 +47,17 @@ Handle<Value> NamespaceLoader::LoadNamespace(char *namespace_, char *version) {
     GITypelib *lib = g_irepository_require(repo, namespace_, version, (GIRepositoryLoadFlags)0, &er);
     if (!lib) {
         Nan::ThrowError(er->message);
+        return Nan::Null();
     }
 
     type_libs.insert(std::make_pair(namespace_, lib));
 
-    Handle<Value> res = BuildClasses(namespace_);
-    return res;
+    return BuildClasses(namespace_);
 }
 
 Handle<Value> NamespaceLoader::BuildClasses(char *namespace_) {
-    Handle<Object> exports = Nan::New<Object>();
+    Nan::EscapableHandleScope scope;
+    Local<Object> exports = Nan::New<Object>();
 
     int length = g_irepository_get_n_infos(repo, namespace_);
     for (int i = 0; i < length; i++) {
@@ -107,7 +110,7 @@ Handle<Value> NamespaceLoader::BuildClasses(char *namespace_) {
     GIRObject::Initialize(exports, namespace_);
     GIRStruct::Initialize(exports, namespace_);
 
-    return exports;
+    return scope.Escape(exports);
 }
 
 void NamespaceLoader::ParseStruct(GIStructInfo *info, Handle<Object> &exports) {
@@ -115,6 +118,7 @@ void NamespaceLoader::ParseStruct(GIStructInfo *info, Handle<Object> &exports) {
 }
 
 void NamespaceLoader::ParseEnum(GIEnumInfo *info, Handle<Object> &exports) {
+    Nan::HandleScope scope;
     Handle<Object> obj = Nan::New<Object>();
 
     int length = g_enum_info_get_n_values(info);
@@ -127,6 +131,7 @@ void NamespaceLoader::ParseEnum(GIEnumInfo *info, Handle<Object> &exports) {
 }
 
 void NamespaceLoader::ParseFlags(GIEnumInfo *info, Handle<Object> &exports) {
+    Nan::HandleScope scope;
     Handle<Object> obj = Nan::New<Object>();
 
     int length = g_enum_info_get_n_values(info);

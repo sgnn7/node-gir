@@ -186,6 +186,7 @@ bool Args::ToGType(Handle<Value> v, GIArgument *arg, GIArgInfo *info, GITypeInfo
 }
 
 Handle<Value> Args::FromGTypeArray(GIArgument *arg, GITypeInfo *type, int array_length) {
+    Nan::EscapableHandleScope scope;
 
     GITypeInfo *param_info = g_type_info_get_param_type(type, 0);
     //bool is_zero_terminated = g_type_info_is_zero_terminated(param_info);
@@ -200,23 +201,23 @@ Handle<Value> Args::FromGTypeArray(GIArgument *arg, GITypeInfo *type, int array_
     switch(param_tag) {
         case GI_TYPE_TAG_UINT8:
             if (arg->v_pointer == nullptr)
-                return Nan::New("", 0).ToLocalChecked();
+                return scope.Escape(Nan::New("", 0).ToLocalChecked());
             // TODO, copy bytes to array
             // http://groups.google.com/group/v8-users/browse_thread/thread/8c5177923675749e?pli=1
-            return Nan::New((char *)arg->v_pointer, array_length).ToLocalChecked();
+            return scope.Escape(Nan::New((char *)arg->v_pointer, array_length).ToLocalChecked());
 
         case GI_TYPE_TAG_GTYPE:
             if (arg->v_pointer == nullptr)
-                return Nan::New<Array>();
+                return scope.Escape(Nan::New<Array>());
             arr = Nan::New<Array>(array_length);
             for (i = 0; i < array_length; i++) {
                 Nan::Set(arr, i, Nan::New((int)GPOINTER_TO_INT( ((gpointer*)arg->v_pointer)[i] )));
             }
-            return arr;
+            return scope.Escape(arr);
 
         case GI_TYPE_TAG_INTERFACE:
             if (arg->v_pointer == nullptr)
-                return Nan::New<Array>();
+                return scope.Escape(Nan::New<Array>());
             arr = Nan::New<Array>(array_length);
             interface_info = g_type_info_get_interface(param_info);
 
@@ -225,16 +226,17 @@ Handle<Value> Args::FromGTypeArray(GIArgument *arg, GITypeInfo *type, int array_
                 arr->Set(i, GIRObject::New(o, interface_info));
             }
             //g_base_info_unref(interface_info); // FIXME
-            return arr;
+            return scope.Escape(arr);
 
         default:
             gchar *exc_msg = g_strdup_printf("Converting array of '%s' is not supported", g_type_tag_to_string(param_tag));
             Nan::ThrowError(exc_msg);
-            return Nan::Undefined();
+            return scope.Escape(Nan::Undefined());
     }
 }
 
-Local<Value> Args::FromGType(GIArgument *arg, GITypeInfo *type, int array_length) {
+Handle<Value> Args::FromGType(GIArgument *arg, GITypeInfo *type, int array_length) {
+    Nan::EscapableHandleScope scope;
     GITypeTag tag = g_type_info_get_tag(type);
 
     if(tag == GI_TYPE_TAG_INTERFACE) {
@@ -277,57 +279,57 @@ Local<Value> Args::FromGType(GIArgument *arg, GITypeInfo *type, int array_length
             return GIRObject::New(o, G_OBJECT_TYPE(o));
         }
         if(g_type_is_a(gtype, G_TYPE_VALUE)) {
-            GIRValue::FromGValue((GValue*)arg->v_pointer, nullptr);
+            return GIRValue::FromGValue((GValue*)arg->v_pointer, nullptr);
         }
     }
 
     switch(tag) {
         case GI_TYPE_TAG_VOID:
-            return Nan::Undefined();
+            return scope.Escape(Nan::Undefined());
         case GI_TYPE_TAG_BOOLEAN:
-            return Nan::New<Boolean>(arg->v_boolean);
+            return scope.Escape(Nan::New<Boolean>(arg->v_boolean));
         case GI_TYPE_TAG_INT8:
-            return Nan::New(arg->v_int8);
+            return scope.Escape(Nan::New(arg->v_int8));
         case GI_TYPE_TAG_UINT8:
-            return Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint8);
+            return scope.Escape(Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint8));
         case GI_TYPE_TAG_INT16:
-            return Nan::New(arg->v_int16);
+            return scope.Escape(Nan::New(arg->v_int16));
         case GI_TYPE_TAG_UINT16:
-            return Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint16);
+            return scope.Escape(Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint16));
         case GI_TYPE_TAG_INT32:
-            return Nan::New(arg->v_int32);
+            return scope.Escape(Nan::New(arg->v_int32));
         case GI_TYPE_TAG_UINT32:
-            return Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint32);
+            return scope.Escape(Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint32));
         case GI_TYPE_TAG_INT64:
-            return Nan::New((double) arg->v_int64);
+            return scope.Escape(Nan::New((double) arg->v_int64));
         case GI_TYPE_TAG_UINT64:
-            return Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint64);
+            return scope.Escape(Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint64));
         case GI_TYPE_TAG_FLOAT:
-            return Nan::New(arg->v_float);
+            return scope.Escape(Nan::New(arg->v_float));
         case GI_TYPE_TAG_DOUBLE:
-            return Nan::New(arg->v_double);
+            return scope.Escape(Nan::New(arg->v_double));
         case GI_TYPE_TAG_GTYPE:
-            return Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint);
+            return scope.Escape(Integer::NewFromUnsigned(v8::Isolate::GetCurrent(), arg->v_uint));
         case GI_TYPE_TAG_UTF8:
-            return Nan::New(arg->v_string).ToLocalChecked();
+            return scope.Escape(Nan::New(arg->v_string).ToLocalChecked());
         case GI_TYPE_TAG_FILENAME:
-            return Nan::New(arg->v_string).ToLocalChecked();
+            return scope.Escape(Nan::New(arg->v_string).ToLocalChecked());
         case GI_TYPE_TAG_ARRAY:
             return Args::FromGTypeArray(arg, type, array_length);
         case GI_TYPE_TAG_INTERFACE:
-            return Nan::Undefined();
+            return scope.Escape(Nan::Undefined());
         case GI_TYPE_TAG_GLIST:
-            return Nan::Undefined();
+            return scope.Escape(Nan::Undefined());
         case GI_TYPE_TAG_GSLIST:
-            return Nan::Undefined();
+            return scope.Escape(Nan::Undefined());
         case GI_TYPE_TAG_GHASH:
-            return Nan::Undefined();
+            return scope.Escape(Nan::Undefined());
         case GI_TYPE_TAG_ERROR:
-            return Nan::Undefined();
+            return scope.Escape(Nan::Undefined());
         case GI_TYPE_TAG_UNICHAR:
-            return Nan::Undefined();
+            return scope.Escape(Nan::Undefined());
         default:
-            return Nan::Undefined();
+            return scope.Escape(Nan::Undefined());
     }
 }
 

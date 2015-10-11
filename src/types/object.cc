@@ -71,6 +71,7 @@ Handle<Value> GIRObject::New(GObject *obj_, GIObjectInfo *info_)
     if (!object_info) {
         gchar *msg = g_strdup_printf("ObjectInfo not found for '%s'", G_OBJECT_TYPE_NAME(obj_));
         Nan::ThrowTypeError(msg);
+        return Nan::Null();
     }
     for (it = templates.begin(); it != templates.end(); ++it) {
         if (g_base_info_equal(object_info, it->info)) {
@@ -94,8 +95,9 @@ Handle<Value> GIRObject::New(GObject *obj_, GIObjectInfo *info_)
 
 Handle<Value> GIRObject::New(GObject *obj_, GType t)
 {
+    Nan::EscapableHandleScope scope;
     if (obj_ == nullptr || !G_IS_OBJECT(obj_)) {
-        return Nan::Null();
+        return scope.Escape(Nan::Null());
     }
 
     Handle<Value> res = GetInstance(obj_);
@@ -103,7 +105,7 @@ Handle<Value> GIRObject::New(GObject *obj_, GType t)
         return res;
     }
 
-    Handle<Value> arg = Nan::New<Boolean>(false);
+    Local<Value> arg = Nan::New<Boolean>(false);
     std::vector<ObjectFunctionTemplate>::iterator it;
     GIBaseInfo *base_info = g_irepository_find_by_gtype(NamespaceLoader::repo, t);
     if (base_info == nullptr) {
@@ -122,7 +124,7 @@ Handle<Value> GIRObject::New(GObject *obj_, GType t)
                 e->abstract = false;
                 return res;
             }
-            return Nan::Null();
+            break;
         }
     }
     return Nan::Null();
@@ -130,11 +132,12 @@ Handle<Value> GIRObject::New(GObject *obj_, GType t)
 
 NAN_METHOD(GIRObject::New)
 {
+    fprintf(stderr, "New called.\n");
     if (info.Length() == 1 && info[0]->IsBoolean() && !info[0]->IsTrue()) {
         GIRObject *obj = new GIRObject();
         obj->Wrap(info.This());
         PushInstance(obj, info.This());
-        info.GetReturnValue().Set(info.This());
+        return info.GetReturnValue().Set(info.This());
     }
 
     String::Utf8Value className(info.Callee()->GetName());
@@ -152,20 +155,20 @@ NAN_METHOD(GIRObject::New)
 
     if (objinfo == nullptr) {
         Nan::ThrowError("no such class. Callee()->GetName() returned wrong classname");
+        return;
     }
 
     int length = 0;
     GParameter *params = nullptr;
-    Local<Value> v = ToParams(info[0], &params, &length, objinfo);
-    if (v != Nan::Null())
-        info.GetReturnValue().Set(v);
-
+    if (!ToParams(info[0], &params, &length, objinfo)) {
+        return info.GetReturnValue().Set(Nan::Undefined());
+    }
     GIRObject *obj = new GIRObject(objinfo, length, params);
     DeleteParams(params, length);
 
     obj->Wrap(info.This());
     PushInstance(obj, info.This());
-    info.GetReturnValue().Set(info.This());
+    return info.GetReturnValue().Set(info.This());
 }
 
 GIRObject::~GIRObject()
@@ -175,12 +178,13 @@ GIRObject::~GIRObject()
     // http://prox.moraphi.com/index.php/https/github.com/bnoordhuis/node/commit/1c20cac
 }
 
-Handle<Value> GIRObject::ToParams(Handle<Value> val, GParameter** params, int *length, GIObjectInfo *info)
+bool GIRObject::ToParams(Handle<Value> val, GParameter** params, int *length, GIObjectInfo *info)
 {
+    Nan::HandleScope scope;
     *length = 0;
     *params = nullptr;
     if (!val->IsObject()) {
-        return Nan::Null();
+        return true;
     }
     Handle<Object> obj = val->ToObject();
 
@@ -205,6 +209,7 @@ Handle<Value> GIRObject::ToParams(Handle<Value> val, GParameter** params, int *l
                 DeleteParams(*params, (*length)-1);
                 gchar *msg = g_strdup_printf("Can not find '%s' property", *key);
                 Nan::ThrowTypeError(msg);
+                return false;
             }
         }
 
@@ -222,6 +227,7 @@ Handle<Value> GIRObject::ToParams(Handle<Value> val, GParameter** params, int *l
             DeleteParams(*params, (*length)-1);
             gchar *msg = g_strdup_printf("'%s' property value conversion failed", *key);
             Nan::ThrowTypeError(msg);
+            return false;
         }
 
         (*params)[i].name = g_strdup(*key);
@@ -233,7 +239,7 @@ Handle<Value> GIRObject::ToParams(Handle<Value> val, GParameter** params, int *l
     if (klass)
         g_type_class_unref(klass);
 
-    return Nan::Null();
+    return true;
 }
 
 void GIRObject::DeleteParams(GParameter *params, int l)
@@ -252,6 +258,7 @@ void GIRObject::DeleteParams(GParameter *params, int l)
 
 NAN_PROPERTY_GETTER(PropertyGetHandler)
 {
+    fprintf(stderr, "Property getting fired..");
     String::Utf8Value _name(property);
     Handle<External> info_ptr = Handle<External>::Cast(info.Data());
     GIBaseInfo *base_info  = (GIBaseInfo*) info_ptr->Value();
@@ -262,6 +269,8 @@ NAN_PROPERTY_GETTER(PropertyGetHandler)
             // Property is not readable
             if (!(pspec->flags & G_PARAM_READABLE)) {
                 Nan::ThrowTypeError("property is not readable");
+                fprintf(stderr, "GRR\n");
+                return;
             }
 
             debug_printf("GetHandler (Get property) [%p] '%s.%s' \n", that->obj, G_OBJECT_TYPE_NAME(that->obj), *_name);
@@ -278,10 +287,12 @@ NAN_PROPERTY_GETTER(PropertyGetHandler)
             if (prop_info)
                 g_base_info_unref(prop_info);
 
+                fprintf(stderr, "OK\n");
             info.GetReturnValue().Set(res);
+            return;
         }
     }
-
+    fprintf(stderr, "Fall back to defaults\n");
     // Fallback to defaults
     info.GetReturnValue().Set(info.This()->GetPrototype()->ToObject()->Get(property));
 }
@@ -306,6 +317,7 @@ NAN_PROPERTY_SETTER(PropertySetHandler)
             // Property is not readable
             if (!(pspec->flags & G_PARAM_WRITABLE)) {
                 Nan::ThrowTypeError("property is not writable");
+                return;
             }
 
             debug_printf("SetHandler (Set property) '%s.%s' \n", G_OBJECT_TYPE_NAME(that->obj), *_name);
@@ -318,6 +330,7 @@ NAN_PROPERTY_SETTER(PropertySetHandler)
                 g_value_unset(&gvalue);
             }
             info.GetReturnValue().Set(Nan::New(value_is_set));
+            return;
         }
     }
 
@@ -327,27 +340,28 @@ NAN_PROPERTY_SETTER(PropertySetHandler)
 
 void GIRObject::Prepare(Handle<Object> target, GIObjectInfo *info)
 {
+    Nan::EscapableHandleScope scope;
     char *name = (char*)g_base_info_get_name(info);
     const char *namespace_ = g_base_info_get_namespace(info);
     g_base_info_ref(info);
 
     Local<FunctionTemplate> t = Nan::New<FunctionTemplate>(New);
-    t->SetClassName(Nan::New<String>(name).ToLocalChecked());
 
     ObjectFunctionTemplate oft;
     oft.type_name = name;
     oft.info = info;
-    oft.function = t;
+    oft.function = scope.Escape(t);
     oft.type = g_registered_type_info_get_g_type(info);
     oft.namespace_ = (char*)namespace_;
+    oft.function->SetClassName(Nan::New<String>(name).ToLocalChecked());
 
     templates.push_back(oft);
 
     // Create instance template
-    v8::Local<v8::ObjectTemplate> instance_t = t->InstanceTemplate();
+    v8::Local<v8::ObjectTemplate> instance_t = oft.function->InstanceTemplate();
     instance_t->SetInternalFieldCount(1);
     // Create external to hold GIBaseInfo and set it
-    v8::Handle<v8::External> info_handle = Nan::New<v8::External>((void*)g_base_info_ref(info));
+    v8::Local<v8::External> info_handle = Nan::New<v8::External>((void*)g_base_info_ref(info));
     // Set properties handlers
     SetNamedPropertyHandler(instance_t,
         PropertyGetHandler,
@@ -357,27 +371,28 @@ void GIRObject::Prepare(Handle<Object> target, GIObjectInfo *info)
         nullptr,
         info_handle);
 
-    t->Set(Nan::New<v8::String>("__properties__").ToLocalChecked(), PropertyList(info));
-    t->Set(Nan::New<v8::String>("__methods__").ToLocalChecked(), MethodList(info));
-    t->Set(Nan::New<v8::String>("__interfaces__").ToLocalChecked(), InterfaceList(info));
-    t->Set(Nan::New<v8::String>("__fields__").ToLocalChecked(), FieldList(info));
-    t->Set(Nan::New<v8::String>("__signals__").ToLocalChecked(), SignalList(info));
-    t->Set(Nan::New<v8::String>("__v_funcs__").ToLocalChecked(), VFuncList(info));
-    t->Set(Nan::New<v8::String>("__abstract__").ToLocalChecked(), Nan::New<Boolean>(g_object_info_get_abstract(info)));
+    oft.function->Set(Nan::New<v8::String>("__properties__").ToLocalChecked(), PropertyList(info));
+    oft.function->Set(Nan::New<v8::String>("__methods__").ToLocalChecked(), MethodList(info));
+    oft.function->Set(Nan::New<v8::String>("__interfaces__").ToLocalChecked(), InterfaceList(info));
+    oft.function->Set(Nan::New<v8::String>("__fields__").ToLocalChecked(), FieldList(info));
+    oft.function->Set(Nan::New<v8::String>("__signals__").ToLocalChecked(), SignalList(info));
+    oft.function->Set(Nan::New<v8::String>("__v_funcs__").ToLocalChecked(), VFuncList(info));
+    oft.function->Set(Nan::New<v8::String>("__abstract__").ToLocalChecked(), Nan::New<Boolean>(g_object_info_get_abstract(info)));
 
     int l = g_object_info_get_n_constants(info);
     for (int i=0; i<l; i++) {
         GIConstantInfo *constant = g_object_info_get_constant(info, i);
-        t->Set(Nan::New<String>(g_base_info_get_name(constant)).ToLocalChecked(), Nan::New<Number>(i));
+        oft.function->Set(Nan::New<String>(g_base_info_get_name(constant)).ToLocalChecked(), Nan::New<Number>(i));
         g_base_info_unref(constant);
     }
 
-    RegisterMethods(target, info, namespace_, t);
-    SetPrototypeMethods(t, name);
+    RegisterMethods(target, info, namespace_, oft.function);
+    SetPrototypeMethods(oft.function, name);
 }
 
 void GIRObject::Initialize(Handle<Object> target, char *namespace_)
 {
+    Nan::HandleScope scope;
     // this gets called when all classes have been initialized
     std::vector<ObjectFunctionTemplate>::iterator it;
     std::vector<ObjectFunctionTemplate>::iterator temp;
@@ -404,6 +419,7 @@ void GIRObject::Initialize(Handle<Object> target, char *namespace_)
 
 void GIRObject::SetPrototypeMethods(Local<FunctionTemplate> t, char *name)
 {
+    Nan::HandleScope scope;
     Nan::SetPrototypeMethod(t, "__get_property__", GetProperty);
     Nan::SetPrototypeMethod(t, "__set_property__", SetProperty);
     Nan::SetPrototypeMethod(t, "__get_interface__", GetInterface);
@@ -414,44 +430,42 @@ void GIRObject::SetPrototypeMethods(Local<FunctionTemplate> t, char *name)
 
 Handle<Value> GIRObject::Emit(Handle<Value> argv[], int length)
 {
-    //String::Utf8Value cname(handle()->GetConstructorName());
-    //String::Utf8Value signal(argv[0]);
-
-    //printf ("Emit, handle is '%s' '%s' [%p], length (%d) \n", *cname, *signal, handle(), length);
+    Nan::EscapableHandleScope scope;
 
     // this will do the magic but dont forget to extend this object in JS from require("events").EventEmitter
     Local<Value> emit_v = handle()->Get(Nan::New("emit").ToLocalChecked());
-    //printf ("EMIT PTR IS [%p] \n", emit_v);
-    //v8::String::AsciiValue ename(emit_v->ToString());
-    //printf ("Emit, emit is '%s' \n", *ename);
     if (emit_v->IsUndefined() || !emit_v->IsFunction()) {
-        return Nan::Null();
+        return scope.Escape(Nan::Null());
     }
 
     Local<Function> emit = Local<Function>::Cast(emit_v);
-    return emit->Call(handle(), length, argv);
+    return scope.Escape(emit->Call(handle(), length, argv));
 }
 
 void GIRObject::PushInstance(GIRObject *obj, Handle<Value> value)
 {
+    fprintf(stderr, "PushInstance\n");
+    Nan::EscapableHandleScope scope;
     Local<Object> p_value = value->ToObject();
     obj->MakeWeak();
 
     InstanceData data;
     data.obj = obj;
-    data.instance = p_value;
+    data.instance = scope.Escape(p_value);
     instances.push_back(data);
 }
 
 Handle<Value> GIRObject::GetInstance(GObject *obj)
 {
+    fprintf(stderr, "GetInstance\n");
+    Nan::EscapableHandleScope scope;
     std::vector<InstanceData>::iterator it;
     for (it = instances.begin(); it != instances.end(); it++) {
         if (it->obj && it->obj->obj && it->obj->obj == obj) {
             return it->instance;
         }
     }
-    return Nan::Null();
+    return scope.Escape(Nan::Null());
 }
 
 void GIRObject::SignalCallback(GClosure *closure,
@@ -461,10 +475,10 @@ void GIRObject::SignalCallback(GClosure *closure,
   gpointer invocation_hint,
   gpointer marshal_data)
 {
+    Nan::HandleScope scope;
     MarshalData *data = (MarshalData*)marshal_data;
 
     Local<Value> args[n_param_values+1];
-    //printf ("SignalCallback : [%p] '%s' \n", data->event_name, data->event_name);
     args[0] = Nan::New<String>(data->event_name).ToLocalChecked();
 
     for (guint i=0; i<n_param_values; i++) {
@@ -474,7 +488,6 @@ void GIRObject::SignalCallback(GClosure *closure,
 
     Handle<Value> res = data->that->Emit(args, n_param_values+1);
     if (res != Nan::Null()) {
-        //printf ("Call ToGValue '%s'\n", G_VALUE_TYPE_NAME(return_value));
         if (return_value && G_IS_VALUE(return_value))
             GIRValue::ToGValue(res, G_VALUE_TYPE(return_value), return_value);
     }
@@ -489,6 +502,7 @@ void GIRObject::SignalFinalize(gpointer marshal_data, GClosure *c)
 
 NAN_METHOD(GIRObject::CallUnknownMethod)
 {
+    fprintf(stderr, "Call unknown method\n");
     String::Utf8Value fname(info.Callee()->GetName());
     debug_printf("Call method '%s' \n", *fname);
     GIRObject *that = Nan::ObjectWrap::Unwrap<GIRObject>(info.This()->ToObject());
@@ -506,8 +520,10 @@ NAN_METHOD(GIRObject::CallUnknownMethod)
 
 NAN_METHOD(GIRObject::CallMethod)
 {
+    fprintf(stderr, "Callmethod\n");
     if (info.Length() < 1 || !info[0]->IsString()) {
         Nan::ThrowError("Invalid argument's number or type");
+        return;
     }
 
     String::Utf8Value fname(info[0]);
@@ -520,14 +536,13 @@ NAN_METHOD(GIRObject::CallMethod)
     else {
         Nan::ThrowError("no such method");
     }
-
-    info.GetReturnValue().SetUndefined();
 }
 
 NAN_METHOD(GIRObject::GetProperty)
 {
     if (info.Length() < 1 || !info[0]->IsString()) {
         Nan::ThrowError("Invalid argument's number or type");
+        return;
     }
 
     String::Utf8Value propname(info[0]);
@@ -536,9 +551,11 @@ NAN_METHOD(GIRObject::GetProperty)
 
     if (!prop) {
         Nan::ThrowError("no such property");
+        return;
     }
     if (!(g_property_info_get_flags(prop) & G_PARAM_READABLE)) {
         Nan::ThrowError("property is not readable");
+        return;
     }
 
     GParamSpec *spec = g_object_class_find_property(G_OBJECT_GET_CLASS(that->obj), *propname);
@@ -557,6 +574,7 @@ NAN_METHOD(GIRObject::SetProperty)
 {
     if(info.Length() < 2 || !info[0]->IsString()) {
         Nan::ThrowError("Invalid argument's number or type");
+        return;
     }
 
     String::Utf8Value propname(info[0]);
@@ -565,9 +583,11 @@ NAN_METHOD(GIRObject::SetProperty)
 
     if (!prop) {
         Nan::ThrowError("no such property");
+        return;
     }
     if (!(g_property_info_get_flags(prop) & G_PARAM_WRITABLE)) {
         Nan::ThrowError("property is not writable");
+        return;
     }
 
     GParamSpec *spec = g_object_class_find_property(G_OBJECT_GET_CLASS(that->obj), *propname);
@@ -575,6 +595,7 @@ NAN_METHOD(GIRObject::SetProperty)
     GValue gvalue = {0, {{0}}};
     if (!GIRValue::ToGValue(info[1], spec->value_type, &gvalue)) {
         Nan::ThrowError("Cant convert to JS value to c value");
+        return;
     }
     g_object_set_property(G_OBJECT(that->obj), *propname, &gvalue);
 
@@ -585,6 +606,7 @@ NAN_METHOD(GIRObject::GetInterface)
 {
     if (info.Length() < 1 || !info[0]->IsString()) {
         Nan::ThrowError("Invalid argument's number or type");
+        return;
     }
 
     String::Utf8Value iname(info[0]);
@@ -605,6 +627,7 @@ NAN_METHOD(GIRObject::GetField)
 {
     if (info.Length() < 1 || !info[0]->IsString()) {
         Nan::ThrowError("Invalid argument's numer or type");
+        return;
     }
 
     String::Utf8Value fname(info[0]);
@@ -625,6 +648,7 @@ NAN_METHOD(GIRObject::WatchSignal)
 {
     if (info.Length() < 1 || !info[0]->IsString()) {
         Nan::ThrowError("Invalid argument's number or type");
+        return;
     }
     bool after = true;
     if (info.Length() > 1 && info[1]->IsBoolean()) {
@@ -634,7 +658,6 @@ NAN_METHOD(GIRObject::WatchSignal)
     String::Utf8Value sname(info[0]);
     GIRObject *that = Nan::ObjectWrap::Unwrap<GIRObject>(info.This()->ToObject());
     GISignalInfo *signal = that->FindSignal(that->info, *sname);
-    //printf ("WATCH : OBJ '%s', SIGNAL '%s' \n", G_OBJECT_TYPE_NAME (that->obj), *sname);
 
     if(signal) {
         MarshalData *data = g_new(MarshalData, 1);
@@ -648,6 +671,7 @@ NAN_METHOD(GIRObject::WatchSignal)
     }
     else {
         Nan::ThrowError("no such signal");
+        return;
     }
 
     info.GetReturnValue().SetUndefined();
@@ -657,6 +681,7 @@ NAN_METHOD(GIRObject::CallVFunc)
 {
     if (info.Length() < 1 || !info[0]->IsString()) {
         Nan::ThrowError("Invalid argument's number or type");
+        return;
     }
 
     String::Utf8Value fname(info[0]);
@@ -833,7 +858,8 @@ GIVFuncInfo *GIRObject::FindVFunc(GIObjectInfo *inf, char *name)
 
 Handle<Object> GIRObject::PropertyList(GIObjectInfo *info)
 {
-    Handle<Object> list = Nan::New<Object>();
+    Nan::EscapableHandleScope scope;
+    Local<Object> list = Nan::New<Object>();
     bool first = true;
     int gcounter = 0;
     g_base_info_ref(info);
@@ -842,10 +868,10 @@ Handle<Object> GIRObject::PropertyList(GIObjectInfo *info)
         if (!first) {
             GIObjectInfo *parent = g_object_info_get_parent(info);
             if (!parent) {
-                return list;
+                return scope.Escape(list);
             }
             if (strcmp(g_base_info_get_name(parent), g_base_info_get_name(info)) == 0) {
-                return list;
+                return scope.Escape(list);
             }
             g_base_info_unref(info);
             info = parent;
@@ -860,13 +886,14 @@ Handle<Object> GIRObject::PropertyList(GIObjectInfo *info)
         gcounter += l;
         first = false;
     }
-
-    return list;
+    
+    return scope.Escape(list);
 }
 
 Handle<Object> GIRObject::MethodList(GIObjectInfo *info)
 {
-    Handle<Object> list = Nan::New<Object>();
+    Nan::EscapableHandleScope scope;
+    Local<Object> list = Nan::New<Object>();
     bool first = true;
     int gcounter = 0;
     g_base_info_ref(info);
@@ -875,10 +902,10 @@ Handle<Object> GIRObject::MethodList(GIObjectInfo *info)
         if (!first) {
             GIObjectInfo *parent = g_object_info_get_parent(info);
             if (!parent) {
-                return list;
+                return scope.Escape(list);
             }
             if (strcmp( g_base_info_get_name(parent), g_base_info_get_name(info) ) == 0) {
-                return list;
+                return scope.Escape(list);
             }
             g_base_info_unref(info);
             info = parent;
@@ -893,12 +920,12 @@ Handle<Object> GIRObject::MethodList(GIObjectInfo *info)
         gcounter += l;
         first = false;
     }
-
-    return list;
+    return scope.Escape(list);
 }
 
 void GIRObject::RegisterMethods(Handle<Object> target, GIObjectInfo *info, const char *namespace_, Handle<FunctionTemplate> t)
 {
+    //Nan::HandleScope scope;
     bool is_object_info = GI_IS_OBJECT_INFO(info);
     // Register interface methods
     if (is_object_info) {
@@ -955,23 +982,25 @@ void GIRObject::RegisterMethods(Handle<Object> target, GIObjectInfo *info, const
             const char *func_name = g_base_info_get_name(func);
             GIFunctionInfoFlags func_flag = g_function_info_get_flags(func);
 
-            // Determine if method is static one.
-            // In such case, do not set prototype method but instead register
-            // a function attached to the namespace of the class.
-            if (func_flag & GI_FUNCTION_IS_METHOD) {
-                Nan::SetPrototypeMethod(t, func_name, CallUnknownMethod);
-            } else {
-                // Create new function
-                Local< Function > callback_func = Nan::New<FunctionTemplate>(Func::CallStaticMethod)->GetFunction();
-                // Set name
-                callback_func->SetName(Nan::New<String>(func_name).ToLocalChecked());
-                // Create external to hold GIBaseInfo and set it
-                v8::Handle<v8::External> info_ptr = Nan::New<v8::External>((void*)g_base_info_ref(func));
-                callback_func->SetHiddenValue(Nan::New<String>("GIInfo").ToLocalChecked(), info_ptr);
-                // Set v8 function
-                t->Set(Nan::New<String>(func_name).ToLocalChecked(), callback_func);
+            if(!t->GetFunction()->Has(Nan::New<String>(func_name).ToLocalChecked())) {
+                // Determine if method is static one.
+                // In such case, do not set prototype method but instead register
+                // a function attached to the namespace of the class.
+                if (func_flag & GI_FUNCTION_IS_METHOD) {
+                    Nan::SetPrototypeMethod(t, func_name, CallUnknownMethod);
+                } else {
+                    // Create new function
+                    Local< Function > callback_func = Nan::New<FunctionTemplate>(Func::CallStaticMethod)->GetFunction();
+                    // Set name
+                    callback_func->SetName(Nan::New<String>(func_name).ToLocalChecked());
+                    // Create external to hold GIBaseInfo and set it
+                    v8::Handle<v8::External> info_ptr = Nan::New<v8::External>((void*)g_base_info_ref(func));
+                    callback_func->SetHiddenValue(Nan::New<String>("GIInfo").ToLocalChecked(), info_ptr);
+                    // Set v8 function
+                    t->Set(Nan::New<String>(func_name).ToLocalChecked(), callback_func);
+                }
+                g_base_info_unref(func);
             }
-            g_base_info_unref(func);
         }
         gcounter += l;
         first = false;
@@ -980,7 +1009,8 @@ void GIRObject::RegisterMethods(Handle<Object> target, GIObjectInfo *info, const
 
 Handle<Object> GIRObject::InterfaceList(GIObjectInfo *info)
 {
-    Handle<Object> list = Nan::New<Object>();
+    Nan::EscapableHandleScope scope;
+    Local<Object> list = Nan::New<Object>();
     bool first = true;
     int gcounter = 0;
     g_base_info_ref(info);
@@ -989,10 +1019,10 @@ Handle<Object> GIRObject::InterfaceList(GIObjectInfo *info)
         if (!first) {
             GIObjectInfo *parent = g_object_info_get_parent(info);
             if (!parent) {
-                return list;
+                return scope.Escape(list);
             }
             if (strcmp( g_base_info_get_name(parent), g_base_info_get_name(info) ) == 0) {
-                return list;
+                return scope.Escape(list);
             }
             g_base_info_unref(info);
             info = parent;
@@ -1008,12 +1038,13 @@ Handle<Object> GIRObject::InterfaceList(GIObjectInfo *info)
         first = false;
     }
 
-    return list;
+    return scope.Escape(list);
 }
 
 Handle<Object> GIRObject::FieldList(GIObjectInfo *info)
 {
-    Handle<Object> list = Nan::New<Object>();
+    Nan::EscapableHandleScope scope;
+    Local<Object> list = Nan::New<Object>();
     bool first = true;
     int gcounter = 0;
     g_base_info_ref(info);
@@ -1022,10 +1053,10 @@ Handle<Object> GIRObject::FieldList(GIObjectInfo *info)
         if (!first) {
             GIObjectInfo *parent = g_object_info_get_parent(info);
             if (!parent) {
-                return list;
+                return scope.Escape(list);
             }
             if (strcmp( g_base_info_get_name(parent), g_base_info_get_name(info) ) == 0) {
-                return list;
+                return scope.Escape(list);
             }
             g_base_info_unref(info);
             info = parent;
@@ -1041,12 +1072,13 @@ Handle<Object> GIRObject::FieldList(GIObjectInfo *info)
         first = false;
     }
 
-    return list;
+    return scope.Escape(list);
 }
 
 Handle<Object> GIRObject::SignalList(GIObjectInfo *info)
 {
-    Handle<Object> list = Nan::New<Object>();
+    Nan::EscapableHandleScope scope;
+    Local<Object> list = Nan::New<Object>();
     bool first = true;
     int gcounter = 0;
     g_base_info_ref(info);
@@ -1055,10 +1087,10 @@ Handle<Object> GIRObject::SignalList(GIObjectInfo *info)
         if (!first) {
             GIObjectInfo *parent = g_object_info_get_parent(info);
             if (!parent) {
-                return list;
+                return scope.Escape(list);
             }
             if (strcmp( g_base_info_get_name(parent), g_base_info_get_name(info)/*"InitiallyUnowned"*/ ) == 0) {
-                return list;
+                return scope.Escape(list);
             }
             g_base_info_unref(info);
             info = parent;
@@ -1074,12 +1106,13 @@ Handle<Object> GIRObject::SignalList(GIObjectInfo *info)
         first = false;
     }
 
-    return list;
+    return scope.Escape(list);
 }
 
 Handle<Object> GIRObject::VFuncList(GIObjectInfo *info)
 {
-    Handle<Object> list = Nan::New<Object>();
+    Nan::EscapableHandleScope scope;
+    Local<Object> list = Nan::New<Object>();
     bool first = true;
     int gcounter = 0;
     g_base_info_ref(info);
@@ -1088,10 +1121,10 @@ Handle<Object> GIRObject::VFuncList(GIObjectInfo *info)
         if (!first) {
             GIObjectInfo *parent = g_object_info_get_parent(info);
             if (!parent) {
-                return list;
+                return scope.Escape(list);
             }
             if (strcmp( g_base_info_get_name(parent), g_base_info_get_name(info) ) == 0) {
-                return list;
+                return scope.Escape(list);
             }
             g_base_info_unref(info);
             info = parent;
@@ -1107,7 +1140,7 @@ Handle<Object> GIRObject::VFuncList(GIObjectInfo *info)
         first = false;
     }
 
-    return list;
+    return scope.Escape(list);
 }
 
 }

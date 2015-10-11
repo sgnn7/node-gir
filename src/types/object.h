@@ -88,7 +88,7 @@ class GIRObject : public Nan::ObjectWrap {
     static v8::Handle<v8::Object> SignalList(GIObjectInfo *info);
     static v8::Handle<v8::Object> VFuncList(GIObjectInfo *info);
 
-    static v8::Handle<v8::Value> ToParams(v8::Handle<v8::Value> val, GParameter** p, int *length, GIObjectInfo *info);
+    static bool ToParams(v8::Handle<v8::Value> val, GParameter** p, int *length, GIObjectInfo *info);
     static void DeleteParams(GParameter* params, int length);
 };
 
